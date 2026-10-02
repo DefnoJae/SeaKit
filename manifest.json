@@ -1,7 +1,7 @@
 {
   "id": "seakit",
   "name": "SeaKit",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "manifestURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/manifest.json",
   "language": "typescript",
   "type": "plugin",
@@ -9,7 +9,7 @@
   "author": "DefnoJae",
   "website": "https://github.com/DefnoJae/SeaKit",
   "lang": "en",
-  "payloadURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/78784fedd526b06f544829fe6ce3d85f4d743ee1/SeaKit.ts",
+  "payloadURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/7a348e76513757447f07107e45d6ee49af5e7c11/SeaKit.ts",
   "plugin": {
     "version": "1",
     "permissions": {
