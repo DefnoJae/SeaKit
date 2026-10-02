@@ -9,18 +9,15 @@ type MyDubListEnglish = {
   partial?: number[];
 };
 
-const K_SHOW_MAL = "seakit.showMal";
-const K_SHOW_DUB = "seakit.showDub";
-
-const MAL_DATA_ATTR = "data-seakit-mal";
-const DUB_DATA_ATTR = "data-seakit-dub";
-
-const JIKAN_BASE = "https://api.jikan.moe/v4/anime";
-const DUB_DATA_URL =
-  "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/confidence/normal/dubbed_english.json";
-
 function init() {
   $ui.register((ctx) => {
+    const K_SHOW_MAL = "seakit.showMal";
+    const K_SHOW_DUB = "seakit.showDub";
+    const MAL_DATA_ATTR = "data-seakit-mal";
+    const DUB_DATA_ATTR = "data-seakit-dub";
+    const JIKAN_BASE = "https://api.jikan.moe/v4/anime";
+    const DUB_DATA_URL =
+      "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/confidence/normal/dubbed_english.json";
     const showMal = ctx.state<boolean>($storage.get<boolean>(K_SHOW_MAL) ?? true);
     const showDub = ctx.state<boolean>($storage.get<boolean>(K_SHOW_DUB) ?? true);
 
