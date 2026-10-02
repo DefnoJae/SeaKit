@@ -250,8 +250,8 @@ function init() {
       return `
         <svg
           viewBox="0 0 24 24"
-          width="18"
-          height="18"
+          width="16"
+          height="16"
           fill="none"
           xmlns="http://www.w3.org/2000/svg"
           aria-hidden="true"
@@ -418,11 +418,28 @@ function init() {
                 ? "English dub available (partial)"
                 : "English dub available",
             );
+            const pillBorder = isPartial
+              ? "rgba(187, 247, 208, 0.58)"
+              : "rgba(74, 222, 128, 0.62)";
+            const pillBackground = isPartial
+              ? "rgba(134, 239, 172, 0.10)"
+              : "rgba(34, 197, 94, 0.10)";
+            const pillGlow = isPartial
+              ? "rgba(187, 247, 208, 0.12)"
+              : "rgba(74, 222, 128, 0.14)";
+
             dub.setStyle("display", "inline-flex");
             dub.setStyle("align-items", "center");
             dub.setStyle("justify-content", "center");
-            dub.setStyle("padding", "0.08rem");
+            dub.setStyle("min-width", "30px");
+            dub.setStyle("height", "22px");
+            dub.setStyle("padding", "0 0.42rem");
             dub.setStyle("margin-left", "0.1rem");
+            dub.setStyle("border", `1px solid ${pillBorder}`);
+            dub.setStyle("border-radius", "9999px");
+            dub.setStyle("background", pillBackground);
+            dub.setStyle("box-shadow", `inset 0 0 0 1px ${pillGlow}`);
+            dub.setStyle("box-sizing", "border-box");
             dub.setStyle("transform", "translateY(1px)");
             dub.setInnerHTML(micSvg(isPartial));
             dubItem = dub;
