@@ -70,11 +70,7 @@ function init() {
       oldDub.forEach((el) => el.remove());
     }
 
-    async function renderCurrentAnime() {
-      const screen = ctx.screen.getCurrent();
-      if (!screen || screen.pathname !== "/entry") return;
-
-      const id = Number(screen.searchParams?.id);
+    async function renderAnime(id: number) {
       if (!id || id >= 2 ** 31) return;
 
       const entry = await ctx.anime.getAnimeEntry(id);
@@ -157,10 +153,11 @@ function init() {
       }
     }
 
-    ctx.screen.onNavigate(async ({ pathname }) => {
+    ctx.screen.onNavigate(async ({ pathname, searchParams }) => {
       if (pathname !== "/entry") return;
+      const id = Number(searchParams.id);
       try {
-        await renderCurrentAnime();
+        await renderAnime(id);
       } catch (err) {
         console.log("[SeaKit] Render error:", err);
       }
