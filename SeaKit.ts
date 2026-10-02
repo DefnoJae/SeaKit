@@ -4,14 +4,14 @@ type JikanAnimeResponse = {
   };
 };
 
-type MyDubListEnglish = {
-  dubbed?: number[];
-  partial?: number[];
-};
-
 type ScoreCacheEntry = {
   score: number;
   fetchedAt: number;
+};
+
+type DubIndex = {
+  dubbed: Record<string, boolean>;
+  partial: Record<string, boolean>;
 };
 
 function init() {
@@ -23,68 +23,161 @@ function init() {
     const DUB_DATA_ATTR = "data-seakit-dub";
     const JIKAN_BASE = "https://api.jikan.moe/v4/anime";
     const DUB_DATA_URL =
-      "https://raw.githubusercontent.com/Joelis57/MyDubList/main/dubs/confidence/normal/dubbed_english.json";
+      "https://raw.githubusercontent.com/Joelis57/MyDubList/refs/heads/main/dubs/confidence/normal/dubbed_english.json";
     const SCORE_TTL = 24 * 60 * 60 * 1000;
+    const JIKAN_GAP_MS = 750;
 
     const showMal = ctx.state<boolean>($storage.get<boolean>(K_SHOW_MAL) ?? true);
     const showDub = ctx.state<boolean>($storage.get<boolean>(K_SHOW_DUB) ?? true);
 
-    let dubData: MyDubListEnglish | null = null;
+    let dubIndex: DubIndex | null = null;
     let lastJikanRequestAt = 0;
+    let jikanQueue: Promise<void> = Promise.resolve();
 
     async function sleep(ms: number) {
       await new Promise<void>((resolve) => ctx.setTimeout(resolve, ms));
     }
 
-    async function getDubData(): Promise<MyDubListEnglish | null> {
-      if (dubData) return dubData;
+    async function withJikanSlot<T>(fn: () => Promise<T>): Promise<T> {
+      const previous = jikanQueue;
+      let release = () => {};
+      jikanQueue = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+
+      await previous;
+      try {
+        return await fn();
+      } finally {
+        release();
+      }
+    }
+
+    function makeIdIndex(values: unknown): Record<string, boolean> {
+      const out: Record<string, boolean> = {};
+      if (!Array.isArray(values)) return out;
+
+      for (const value of values) {
+        const id = Number(value);
+        if (Number.isFinite(id) && id > 0) {
+          out[String(id)] = true;
+        }
+      }
+      return out;
+    }
+
+    async function getDubIndex(): Promise<DubIndex | null> {
+      if (dubIndex) return dubIndex;
+
       try {
         const res = await fetch(DUB_DATA_URL);
         if (!res.ok) {
           console.log(`[SeaKit] MyDubList request failed: HTTP ${res.status}`);
           return null;
         }
-        dubData = res.json<MyDubListEnglish>();
-        return dubData;
+
+        // Parse from text so the arrays are normal JS arrays inside Goja.
+        const parsed = JSON.parse(res.text()) as any;
+
+        // MyDubList currently uses { dubbed: [...], partial: [...] }.
+        // Keep legacy array support too, in case an older cached dataset is returned.
+        const dubbedValues = Array.isArray(parsed) ? parsed : parsed?.dubbed;
+        const partialValues = Array.isArray(parsed) ? [] : parsed?.partial;
+
+        dubIndex = {
+          dubbed: makeIdIndex(dubbedValues),
+          partial: makeIdIndex(partialValues),
+        };
+
+        console.log(
+          `[SeaKit] MyDubList loaded: dubbed=${Object.keys(dubIndex.dubbed).length} partial=${Object.keys(dubIndex.partial).length}`,
+        );
+
+        return dubIndex;
       } catch (err) {
-        console.log("[SeaKit] Failed to fetch MyDubList:", err);
+        console.log("[SeaKit] Failed to fetch/parse MyDubList:", err);
         return null;
       }
+    }
+
+    async function fetchJikanScore(
+      malId: number,
+      path: string,
+      attempt: number,
+    ): Promise<number | null> {
+      const sinceLast = Date.now() - lastJikanRequestAt;
+      if (sinceLast < JIKAN_GAP_MS) {
+        await sleep(JIKAN_GAP_MS - sinceLast);
+      }
+
+      lastJikanRequestAt = Date.now();
+      const res = await fetch(`${JIKAN_BASE}/${malId}${path}`);
+
+      if (!res.ok) {
+        console.log(
+          `[SeaKit] Jikan attempt ${attempt} failed for MAL ${malId}: HTTP ${res.status}`,
+        );
+        return null;
+      }
+
+      const json = JSON.parse(res.text()) as JikanAnimeResponse;
+      return json?.data?.score ?? null;
     }
 
     async function getMalScore(malId: number): Promise<number | null> {
       const cache =
         $storage.get<Record<string, ScoreCacheEntry>>(K_SCORE_CACHE) ?? {};
       const cached = cache[String(malId)];
+
       if (cached && Date.now() - cached.fetchedAt < SCORE_TTL) {
         return cached.score;
       }
 
-      try {
-        const sinceLast = Date.now() - lastJikanRequestAt;
-        if (sinceLast < 450) await sleep(450 - sinceLast);
-
-        lastJikanRequestAt = Date.now();
-        const res = await fetch(`${JIKAN_BASE}/${malId}`);
-
-        if (!res.ok) {
-          console.log(
-            `[SeaKit] Jikan request failed for MAL ${malId}: HTTP ${res.status}`,
-          );
-          return null;
+      return withJikanSlot(async () => {
+        // Another queued request may have filled the cache while we waited.
+        const freshCache =
+          $storage.get<Record<string, ScoreCacheEntry>>(K_SCORE_CACHE) ?? {};
+        const freshCached = freshCache[String(malId)];
+        if (freshCached && Date.now() - freshCached.fetchedAt < SCORE_TTL) {
+          return freshCached.score;
         }
 
-        const json = res.json<JikanAnimeResponse>();
-        const score = json?.data?.score ?? null;
-        if (score == null) return null;
+        const paths = ["", "", "/full"];
 
-        cache[String(malId)] = { score, fetchedAt: Date.now() };
-        $storage.set(K_SCORE_CACHE, cache);
-        return score;
-      } catch (err) {
-        console.log(`[SeaKit] Failed to fetch MAL score for ${malId}:`, err);
+        for (let i = 0; i < paths.length; i++) {
+          try {
+            const score = await fetchJikanScore(malId, paths[i], i + 1);
+            if (score != null) {
+              freshCache[String(malId)] = {
+                score,
+                fetchedAt: Date.now(),
+              };
+              $storage.set(K_SCORE_CACHE, freshCache);
+              return score;
+            }
+          } catch (err) {
+            console.log(
+              `[SeaKit] Jikan attempt ${i + 1} errored for MAL ${malId}:`,
+              err,
+            );
+          }
+
+          if (i < paths.length - 1) {
+            await sleep(700 * (i + 1));
+          }
+        }
+
+        // If Jikan is temporarily down, prefer an older cached score over no badge.
+        if (freshCached) {
+          console.log(
+            `[SeaKit] Using stale cached MAL score for ${malId} after Jikan failures`,
+          );
+          return freshCached.score;
+        }
+
+        console.log(`[SeaKit] MAL score unavailable for ${malId} after retries`);
         return null;
-      }
+      });
     }
 
     function micSvg(color: string) {
@@ -102,6 +195,7 @@ function init() {
     async function clearSeaKit(container: $ui.DOMElement) {
       const oldMal = await container.query(`[${MAL_DATA_ATTR}]`);
       oldMal.forEach((el) => el.remove());
+
       const oldDub = await container.query(`[${DUB_DATA_ATTR}]`);
       oldDub.forEach((el) => el.remove());
     }
@@ -111,8 +205,10 @@ function init() {
         "[data-anime-meta-section-buttons-container]",
         { withInnerHTML: true, identifyChildren: true },
       );
+
       if (container) return container;
       if (attempt >= 5) return null;
+
       await sleep(250 + attempt * 200);
       return getContainer(attempt + 1);
     }
@@ -122,6 +218,7 @@ function init() {
 
       const entry = await ctx.anime.getAnimeEntry(id);
       const media = entry?.media;
+
       if (!media?.idMal) {
         console.log(`[SeaKit] AniList ${id} has no MAL ID`);
         return;
@@ -146,6 +243,7 @@ function init() {
 
       if (showMal.get()) {
         const score = await getMalScore(media.idMal);
+
         if (score != null) {
           const item = await ctx.dom.createElement("a");
           item.setAttribute(MAL_DATA_ATTR, "true");
@@ -182,14 +280,15 @@ function init() {
       }
 
       if (showDub.get()) {
-        const data = await getDubData();
-        if (data) {
-          const malId = media.idMal;
-          const isDubbed = (data.dubbed ?? []).includes(malId);
-          const isPartial = (data.partial ?? []).includes(malId);
+        const index = await getDubIndex();
+
+        if (index) {
+          const key = String(media.idMal);
+          const isPartial = !!index.partial[key];
+          const isDubbed = !!index.dubbed[key];
 
           console.log(
-            `[SeaKit] Dub lookup MAL ${malId}: dubbed=${isDubbed} partial=${isPartial}`,
+            `[SeaKit] Dub lookup MAL ${media.idMal}: dubbed=${isDubbed} partial=${isPartial}`,
           );
 
           if (isDubbed || isPartial) {
@@ -211,14 +310,15 @@ function init() {
         }
       }
 
-      // Insert both items relative to Seanime's native AniList button.
-      // Avoid chaining .after() from a newly-created injected element.
+      // Insert relative to Seanime's native AniList button.
+      // Put MAL first, then dub, without chaining from injected nodes.
       if (dubItem) anchor.after(dubItem);
       if (malItem) anchor.after(malItem);
     }
 
     ctx.screen.onNavigate(async ({ pathname, searchParams }) => {
       if (pathname !== "/entry") return;
+
       const id = Number(searchParams.id);
       try {
         await renderAnime(id);
@@ -242,6 +342,7 @@ function init() {
     });
 
     const tray = ctx.newTray({ withContent: true });
+
     tray.render(() =>
       tray.stack(
         [
