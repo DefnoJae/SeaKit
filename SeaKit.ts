@@ -243,15 +243,70 @@ function init() {
       });
     }
 
-    function micSvg(color: string) {
+    function micSvg(isPartial: boolean) {
+      const stroke = isPartial ? "#86efac" : "#22c55e";
+      const accent = isPartial ? "#bbf7d0" : "#4ade80";
+
       return `
-        <svg viewBox="0 0 24 24" width="25" height="25" fill="none"
-             stroke="${color}" stroke-width="2" stroke-linecap="round"
-             stroke-linejoin="round" aria-hidden="true">
-          <rect x="9" y="2" width="6" height="12" rx="3"></rect>
-          <path d="M5 10a7 7 0 0 0 14 0"></path>
-          <path d="M12 17v5"></path>
-          <path d="M8 22h8"></path>
+        <svg
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          fill="none"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+        >
+          <defs>
+            <linearGradient
+              id="seakitMicGradient"
+              x1="12"
+              y1="3"
+              x2="12"
+              y2="21"
+              gradientUnits="userSpaceOnUse"
+            >
+              <stop offset="0%" stop-color="${accent}" />
+              <stop offset="100%" stop-color="${stroke}" />
+            </linearGradient>
+          </defs>
+
+          <rect
+            x="9"
+            y="3"
+            width="6"
+            height="10"
+            rx="3"
+            stroke="url(#seakitMicGradient)"
+            stroke-width="2"
+          />
+
+          <path
+            d="M6.5 10.5C6.5 13.5376 8.96243 16 12 16C15.0376 16 17.5 13.5376 17.5 10.5"
+            stroke="url(#seakitMicGradient)"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+
+          <path
+            d="M12 16V19"
+            stroke="${stroke}"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+
+          <path
+            d="M9.5 21H14.5"
+            stroke="${stroke}"
+            stroke-width="2"
+            stroke-linecap="round"
+          />
+
+          <path
+            d="M10.5 5.3C10.9 4.8 11.5 4.5 12.2 4.5"
+            stroke="${accent}"
+            stroke-width="1.4"
+            stroke-linecap="round"
+          />
         </svg>`;
     }
 
@@ -366,8 +421,10 @@ function init() {
             dub.setStyle("display", "inline-flex");
             dub.setStyle("align-items", "center");
             dub.setStyle("justify-content", "center");
-            dub.setStyle("padding", "0.2rem");
-            dub.setInnerHTML(micSvg(isPartial ? "#a3e635" : "#22c55e"));
+            dub.setStyle("padding", "0.08rem");
+            dub.setStyle("margin-left", "0.1rem");
+            dub.setStyle("transform", "translateY(1px)");
+            dub.setInnerHTML(micSvg(isPartial));
             dubItem = dub;
           }
         }
