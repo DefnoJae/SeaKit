@@ -1,0 +1,25 @@
+{
+  "id": "seakit",
+  "name": "SeaKit",
+  "version": "0.1.0",
+  "manifestURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/manifest.json",
+  "language": "typescript",
+  "type": "plugin",
+  "description": "Adds optional MAL ratings and English dub status to Seanime anime detail pages.",
+  "author": "DefnoJae",
+  "website": "https://github.com/DefnoJae/SeaKit",
+  "lang": "en",
+  "payloadURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/SeaKit.ts",
+  "plugin": {
+    "version": "1",
+    "permissions": {
+      "scopes": ["storage"],
+      "allow": {
+        "networkAccess": {
+          "allowedDomains": ["api.jikan.moe", "raw.githubusercontent.com"],
+          "reasoning": "SeaKit fetches MyAnimeList scores from Jikan and English dub status from the MyDubList dataset."
+        }
+      }
+    }
+  }
+}
