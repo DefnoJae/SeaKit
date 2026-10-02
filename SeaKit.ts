@@ -22,6 +22,7 @@ function init() {
     const MAL_DATA_ATTR = "data-seakit-mal";
     const DUB_DATA_ATTR = "data-seakit-dub";
     const JIKAN_BASE = "https://api.jikan.moe/v4/anime";
+    const MAL_BASE = "https://myanimelist.net/anime";
     const DUB_DATA_URL =
       "https://raw.githubusercontent.com/Joelis57/MyDubList/refs/heads/main/dubs/confidence/normal/dubbed_english.json";
     const SCORE_TTL = 24 * 60 * 60 * 1000;
@@ -32,16 +33,16 @@ function init() {
 
     let dubIndex: DubIndex | null = null;
     let lastJikanRequestAt = 0;
-    let jikanQueue: Promise<void> = Promise.resolve();
+    let scoreQueue: Promise<void> = Promise.resolve();
 
     async function sleep(ms: number) {
       await new Promise<void>((resolve) => ctx.setTimeout(resolve, ms));
     }
 
-    async function withJikanSlot<T>(fn: () => Promise<T>): Promise<T> {
-      const previous = jikanQueue;
+    async function withScoreSlot<T>(fn: () => Promise<T>): Promise<T> {
+      const previous = scoreQueue;
       let release = () => {};
-      jikanQueue = new Promise<void>((resolve) => {
+      scoreQueue = new Promise<void>((resolve) => {
         release = resolve;
       });
 
@@ -76,11 +77,7 @@ function init() {
           return null;
         }
 
-        // Parse from text so the arrays are normal JS arrays inside Goja.
         const parsed = JSON.parse(res.text()) as any;
-
-        // MyDubList currently uses { dubbed: [...], partial: [...] }.
-        // Keep legacy array support too, in case an older cached dataset is returned.
         const dubbedValues = Array.isArray(parsed) ? parsed : parsed?.dubbed;
         const partialValues = Array.isArray(parsed) ? [] : parsed?.partial;
 
@@ -121,7 +118,67 @@ function init() {
       }
 
       const json = JSON.parse(res.text()) as JikanAnimeResponse;
-      return json?.data?.score ?? null;
+      const score = json?.data?.score ?? null;
+
+      if (score != null) {
+        console.log(`[SeaKit] MAL score ${score} from Jikan for ${malId}`);
+      }
+
+      return score;
+    }
+
+    function extractMalScore(html: string): number | null {
+      const patterns = [
+        /itemprop=["']ratingValue["'][^>]*content=["']([0-9.]+)["']/i,
+        /itemprop=["']ratingValue["'][^>]*>([0-9.]+)</i,
+        /["']ratingValue["']\s*:\s*["']?([0-9.]+)["']?/i,
+        /class=["'][^"']*score-label[^"']*["'][^>]*>([0-9.]+)</i,
+      ];
+
+      for (const pattern of patterns) {
+        const match = html.match(pattern);
+        if (!match) continue;
+
+        const score = Number(match[1]);
+        if (Number.isFinite(score) && score > 0 && score <= 10) {
+          return score;
+        }
+      }
+
+      return null;
+    }
+
+    async function fetchMalPageScore(malId: number): Promise<number | null> {
+      try {
+        const res = await fetch(`${MAL_BASE}/${malId}`);
+
+        if (!res.ok) {
+          console.log(
+            `[SeaKit] MAL page fallback failed for ${malId}: HTTP ${res.status}`,
+          );
+          return null;
+        }
+
+        const score = extractMalScore(res.text());
+
+        if (score != null) {
+          console.log(
+            `[SeaKit] MAL score ${score} from MyAnimeList page fallback for ${malId}`,
+          );
+          return score;
+        }
+
+        console.log(
+          `[SeaKit] MAL page fallback returned no score for ${malId}`,
+        );
+        return null;
+      } catch (err) {
+        console.log(
+          `[SeaKit] MAL page fallback errored for ${malId}:`,
+          err,
+        );
+        return null;
+      }
     }
 
     async function getMalScore(malId: number): Promise<number | null> {
@@ -133,49 +190,55 @@ function init() {
         return cached.score;
       }
 
-      return withJikanSlot(async () => {
-        // Another queued request may have filled the cache while we waited.
+      return withScoreSlot(async () => {
         const freshCache =
           $storage.get<Record<string, ScoreCacheEntry>>(K_SCORE_CACHE) ?? {};
         const freshCached = freshCache[String(malId)];
+
         if (freshCached && Date.now() - freshCached.fetchedAt < SCORE_TTL) {
           return freshCached.score;
         }
 
-        const paths = ["", "", "/full"];
+        let score: number | null = null;
 
-        for (let i = 0; i < paths.length; i++) {
+        try {
+          score = await fetchJikanScore(malId, "", 1);
+        } catch (err) {
+          console.log(`[SeaKit] Jikan attempt 1 errored for MAL ${malId}:`, err);
+        }
+
+        if (score == null) {
+          score = await fetchMalPageScore(malId);
+        }
+
+        if (score == null) {
+          await sleep(900);
           try {
-            const score = await fetchJikanScore(malId, paths[i], i + 1);
-            if (score != null) {
-              freshCache[String(malId)] = {
-                score,
-                fetchedAt: Date.now(),
-              };
-              $storage.set(K_SCORE_CACHE, freshCache);
-              return score;
-            }
+            score = await fetchJikanScore(malId, "/full", 2);
           } catch (err) {
-            console.log(
-              `[SeaKit] Jikan attempt ${i + 1} errored for MAL ${malId}:`,
-              err,
-            );
-          }
-
-          if (i < paths.length - 1) {
-            await sleep(700 * (i + 1));
+            console.log(`[SeaKit] Jikan fallback errored for MAL ${malId}:`, err);
           }
         }
 
-        // If Jikan is temporarily down, prefer an older cached score over no badge.
+        if (score != null) {
+          freshCache[String(malId)] = {
+            score,
+            fetchedAt: Date.now(),
+          };
+          $storage.set(K_SCORE_CACHE, freshCache);
+          return score;
+        }
+
         if (freshCached) {
           console.log(
-            `[SeaKit] Using stale cached MAL score for ${malId} after Jikan failures`,
+            `[SeaKit] Using stale cached MAL score for ${malId} after source failures`,
           );
           return freshCached.score;
         }
 
-        console.log(`[SeaKit] MAL score unavailable for ${malId} after retries`);
+        console.log(
+          `[SeaKit] MAL score unavailable for ${malId} after Jikan + MAL page fallbacks`,
+        );
         return null;
       });
     }
@@ -310,8 +373,6 @@ function init() {
         }
       }
 
-      // Insert relative to Seanime's native AniList button.
-      // Put MAL first, then dub, without chaining from injected nodes.
       if (dubItem) anchor.after(dubItem);
       if (malItem) anchor.after(malItem);
     }
