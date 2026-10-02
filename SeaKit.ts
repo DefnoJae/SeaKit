@@ -7,6 +7,7 @@ type JikanAnimeResponse = {
 type ScoreCacheEntry = {
   score: number;
   fetchedAt: number;
+  source: "mal" | "jikan";
 };
 
 type DubIndex = {
@@ -18,14 +19,15 @@ function init() {
   $ui.register((ctx) => {
     const K_SHOW_MAL = "seakit.showMal";
     const K_SHOW_DUB = "seakit.showDub";
-    const K_SCORE_CACHE = "seakit.malScoreCache";
+    const K_SCORE_CACHE = "seakit.malScoreCache.v2";
     const MAL_DATA_ATTR = "data-seakit-mal";
     const DUB_DATA_ATTR = "data-seakit-dub";
     const JIKAN_BASE = "https://api.jikan.moe/v4/anime";
     const MAL_BASE = "https://myanimelist.net/anime";
     const DUB_DATA_URL =
       "https://raw.githubusercontent.com/Joelis57/MyDubList/refs/heads/main/dubs/confidence/normal/dubbed_english.json";
-    const SCORE_TTL = 24 * 60 * 60 * 1000;
+    const MAL_SCORE_TTL = 30 * 60 * 1000;
+    const JIKAN_SCORE_TTL = 5 * 60 * 1000;
     const JIKAN_GAP_MS = 750;
 
     const showMal = ctx.state<boolean>($storage.get<boolean>(K_SHOW_MAL) ?? true);
@@ -154,7 +156,7 @@ function init() {
 
         if (!res.ok) {
           console.log(
-            `[SeaKit] MAL page fallback failed for ${malId}: HTTP ${res.status}`,
+            `[SeaKit] MyAnimeList page request failed for ${malId}: HTTP ${res.status}`,
           );
           return null;
         }
@@ -163,22 +165,30 @@ function init() {
 
         if (score != null) {
           console.log(
-            `[SeaKit] MAL score ${score} from MyAnimeList page fallback for ${malId}`,
+            `[SeaKit] MAL score ${score} from MyAnimeList page for ${malId}`,
           );
           return score;
         }
 
         console.log(
-          `[SeaKit] MAL page fallback returned no score for ${malId}`,
+          `[SeaKit] MyAnimeList page returned no score for ${malId}`,
         );
         return null;
       } catch (err) {
         console.log(
-          `[SeaKit] MAL page fallback errored for ${malId}:`,
+          `[SeaKit] MyAnimeList page request errored for ${malId}:`,
           err,
         );
         return null;
       }
+    }
+
+    function scoreCacheTtl(entry: ScoreCacheEntry): number {
+      return entry.source === "mal" ? MAL_SCORE_TTL : JIKAN_SCORE_TTL;
+    }
+
+    function isFreshScore(entry: ScoreCacheEntry | undefined): boolean {
+      return !!entry && Date.now() - entry.fetchedAt < scoreCacheTtl(entry);
     }
 
     async function getMalScore(malId: number): Promise<number | null> {
@@ -186,7 +196,7 @@ function init() {
         $storage.get<Record<string, ScoreCacheEntry>>(K_SCORE_CACHE) ?? {};
       const cached = cache[String(malId)];
 
-      if (cached && Date.now() - cached.fetchedAt < SCORE_TTL) {
+      if (isFreshScore(cached)) {
         return cached.score;
       }
 
@@ -195,20 +205,23 @@ function init() {
           $storage.get<Record<string, ScoreCacheEntry>>(K_SCORE_CACHE) ?? {};
         const freshCached = freshCache[String(malId)];
 
-        if (freshCached && Date.now() - freshCached.fetchedAt < SCORE_TTL) {
+        if (isFreshScore(freshCached)) {
           return freshCached.score;
         }
 
-        let score: number | null = null;
-
-        try {
-          score = await fetchJikanScore(malId, "", 1);
-        } catch (err) {
-          console.log(`[SeaKit] Jikan attempt 1 errored for MAL ${malId}:`, err);
-        }
+        // MAL's own page is the source of truth for the number shown on MAL.
+        // Jikan can occasionally lag behind MAL's live score, so only use it
+        // when the direct MAL page is unavailable.
+        let score: number | null = await fetchMalPageScore(malId);
+        let source: "mal" | "jikan" = "mal";
 
         if (score == null) {
-          score = await fetchMalPageScore(malId);
+          source = "jikan";
+          try {
+            score = await fetchJikanScore(malId, "", 1);
+          } catch (err) {
+            console.log(`[SeaKit] Jikan attempt 1 errored for MAL ${malId}:`, err);
+          }
         }
 
         if (score == null) {
@@ -224,8 +237,12 @@ function init() {
           freshCache[String(malId)] = {
             score,
             fetchedAt: Date.now(),
+            source,
           };
           $storage.set(K_SCORE_CACHE, freshCache);
+          console.log(
+            `[SeaKit] Cached MAL score ${score} for ${malId} from ${source}`,
+          );
           return score;
         }
 
@@ -237,7 +254,7 @@ function init() {
         }
 
         console.log(
-          `[SeaKit] MAL score unavailable for ${malId} after Jikan + MAL page fallbacks`,
+          `[SeaKit] MAL score unavailable for ${malId} after MAL + Jikan fallbacks`,
         );
         return null;
       });
