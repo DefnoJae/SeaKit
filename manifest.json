@@ -2,14 +2,14 @@
   "id": "seakit",
   "name": "SeaKit",
   "version": "0.1.8",
-  "manifestURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/manifest.json?v=0.1.8",
+  "manifestURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/manifest.json",
   "language": "typescript",
   "type": "plugin",
   "description": "Adds optional MAL ratings and English dub status to Seanime anime detail pages.",
   "author": "DefnoJae",
   "website": "https://github.com/DefnoJae/SeaKit",
   "lang": "en",
-  "payloadURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/SeaKit.ts?v=0.1.8",
+  "payloadURI": "https://raw.githubusercontent.com/DefnoJae/SeaKit/1d09f6385d614524f62e35a5d97a48335becba8b/SeaKit.ts",
   "plugin": {
     "version": "1",
     "permissions": {
@@ -28,5 +28,5 @@
       }
     }
   },
-  "icon": "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/icon.png"
+  "icon": "https://raw.githubusercontent.com/DefnoJae/SeaKit/d78f7da7053ed9d64fe903efd6fb43f5b27917de/icon.png"
 }
