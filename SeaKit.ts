@@ -404,7 +404,7 @@ function init() {
 
     const tray = ctx.newTray({
       withContent: true,
-      iconUrl: "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/icon.png?v=0.1.7",
+      iconUrl: "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/icon.png",
     });
 
     tray.render(() =>
