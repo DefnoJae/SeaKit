@@ -402,7 +402,10 @@ function init() {
       ctx.screen.loadCurrent();
     });
 
-    const tray = ctx.newTray({ withContent: true });
+    const tray = ctx.newTray({
+      withContent: true,
+      iconUrl: "https://raw.githubusercontent.com/DefnoJae/SeaKit/main/icon.svg?v=0.1.6",
+    });
 
     tray.render(() =>
       tray.stack(
