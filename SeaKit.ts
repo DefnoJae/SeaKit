@@ -19,8 +19,6 @@ function init() {
   $ui.register((ctx) => {
     const K_SHOW_MAL = "seakit.showMal";
     const K_SHOW_DUB = "seakit.showDub";
-    const K_AUTO_DUB = "seakit.autoDub";
-    const AUTO_DUB_BRIDGE_ATTR = "data-seakit-auto-dub-bridge";
     const K_SCORE_CACHE = "seakit.malScoreCache.v2";
     const MAL_DATA_ATTR = "data-seakit-mal";
     const DUB_DATA_ATTR = "data-seakit-dub";
@@ -34,98 +32,8 @@ function init() {
 
     const showMal = ctx.state<boolean>($storage.get<boolean>(K_SHOW_MAL) ?? true);
     const showDub = ctx.state<boolean>($storage.get<boolean>(K_SHOW_DUB) ?? true);
-    const autoDub = ctx.state<boolean>($storage.get<boolean>(K_AUTO_DUB) ?? false);
-
-    // One attempt per mounted streaming control and anime. Episode changes and
-    // manual switches must not force the user's selection back to dub.
-    let autoDubControls: Record<string, boolean> = {};
-    let autoDubGeneration = 0;
-    // screen.state() creates a subscription AND requests a navigation event.
-    // Never create it inside a DOM callback: that feeds navigation back into
-    // rendering. Use the event snapshot instead.
-    let currentScreen = { pathname: "", searchParams: {} as Record<string, string> };
-    let autoDubChecking = false;
-    let cancelAutoDubTimer: (() => void) | null = null;
-
-    async function applyAutoDub(buttons: $ui.DOMElement[]) {
-      const screen = currentScreen;
-      if (!autoDub.get() || !["/entry", "/onlinestream"].includes(screen.pathname)) return;
-      const mediaId = Number(screen.searchParams.id);
-      if (!Number.isSafeInteger(mediaId) || mediaId <= 0) return;
-
-      const controls = buttons.filter((button) =>
-        /Switch to (dub|subs)/.test(button.innerHTML ?? ""),
-      );
-      // Observer callbacks contain changed buttons, not a full DOM snapshot.
-      // Keep handled controls when an unrelated button changes.
-      if (!controls.length) return;
-
-      const generation = autoDubGeneration;
-      for (const button of controls) {
-        const key = `${mediaId}:${button.id}`;
-        if (autoDubControls[key]) continue;
-        autoDubControls[key] = true;
-        const label = (await button.getText()).trim();
-        if (label !== "Switch to dub") continue;
-        if ("disabled" in button.attributes) {
-          delete autoDubControls[key];
-          continue;
-        }
-
-        // Seanime exposes DOM insertion, but no DOM click method. A local image
-        // load handler bridges to the existing React button; no remote resource,
-        // React internals, or direct Seanime preference writes are needed.
-        const bridge = await ctx.dom.createElement("span");
-        if (!autoDub.get() || generation !== autoDubGeneration) {
-          bridge.remove();
-          return;
-        }
-        bridge.setAttribute(AUTO_DUB_BRIDGE_ATTR, "true");
-        bridge.setAttribute("aria-hidden", "true");
-        bridge.setStyle("display", "none");
-        button.append(bridge);
-        // Recheck the live label and media before clicking, since navigation or
-        // a manual switch can happen while the DOM request is in flight.
-        bridge.setInnerHTML(`<img alt="" onload="
-          const bridge = this.parentElement;
-          const button = bridge.closest('button');
-          const mediaId = Number(new URLSearchParams(location.search).get('id'));
-          if (bridge.isConnected &amp;&amp; button &amp;&amp; !button.disabled
-              &amp;&amp; mediaId === ${mediaId}
-              &amp;&amp; ['/entry', '/onlinestream'].includes(location.pathname)
-              &amp;&amp; button.textContent.trim() === 'Switch to dub') {
-            button.click();
-          }
-          bridge.remove();
-        " src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7">`);
-      }
-    }
-
-    // Avoid observing every button mutation (including our own insertions).
-    // One sequential query runs while enabled on an anime/streaming page.
-    async function refreshAutoDub() {
-      if (autoDubChecking) return;
-      if (cancelAutoDubTimer) cancelAutoDubTimer();
-      cancelAutoDubTimer = null;
-      if (!autoDub.get() || !["/entry", "/onlinestream"].includes(currentScreen.pathname)) return;
-      autoDubChecking = true;
-      try {
-        const buttons = await ctx.dom.query("button", { withInnerHTML: true });
-        await applyAutoDub(buttons);
-      } catch (err) {
-        console.log("[SeaKit] Auto dub error:", err);
-      } finally {
-        autoDubChecking = false;
-        if (autoDub.get() && ["/entry", "/onlinestream"].includes(currentScreen.pathname)) {
-          cancelAutoDubTimer = ctx.setTimeout(() => { refreshAutoDub(); }, 1000);
-        }
-      }
-    }
-    ctx.dom.onReady(() => { refreshAutoDub(); });
-    ctx.dom.onMainTabReady(() => { refreshAutoDub(); });
 
     let dubIndex: DubIndex | null = null;
-    let dubIndexRequest: Promise<DubIndex | null> | null = null;
     let lastJikanRequestAt = 0;
     let scoreQueue: Promise<void> = Promise.resolve();
 
@@ -163,16 +71,6 @@ function init() {
 
     async function getDubIndex(): Promise<DubIndex | null> {
       if (dubIndex) return dubIndex;
-      if (dubIndexRequest) return dubIndexRequest;
-      dubIndexRequest = fetchDubIndex();
-      try {
-        return await dubIndexRequest;
-      } finally {
-        dubIndexRequest = null;
-      }
-    }
-
-    async function fetchDubIndex(): Promise<DubIndex | null> {
 
       try {
         const res = await fetch(DUB_DATA_URL);
@@ -452,12 +350,9 @@ function init() {
 
     async function renderAnime(id: number) {
       if (!id || id >= 2 ** 31) return;
-      const isCurrent = () => currentScreen.pathname === "/entry"
-        && Number(currentScreen.searchParams.id) === id;
 
       const entry = await ctx.anime.getAnimeEntry(id);
       const media = entry?.media;
-      if (!isCurrent()) return;
 
       if (!media?.idMal) {
         console.log(`[SeaKit] AniList ${id} has no MAL ID`);
@@ -465,7 +360,6 @@ function init() {
       }
 
       const container = await getContainer();
-      if (!isCurrent()) return;
       if (!container) {
         console.log("[SeaKit] Anime action container was not ready");
         return;
@@ -520,13 +414,6 @@ function init() {
         }
       }
 
-      // Show MAL as soon as it is ready; a slow dub-data request must not hide it.
-      if (!isCurrent()) {
-        if (malItem) malItem.remove();
-        return;
-      }
-      if (malItem) anchor.after(malItem);
-
       if (showDub.get()) {
         const index = await getDubIndex();
 
@@ -577,45 +464,25 @@ function init() {
         }
       }
 
-      if (!isCurrent()) {
-        if (dubItem) dubItem.remove();
-        return;
-      }
       if (dubItem) anchor.after(dubItem);
+      if (malItem) anchor.after(malItem);
     }
 
-    let renderQueue: Promise<void> = Promise.resolve();
-    let lastRenderKey = "";
-    let badgeRevision = 0;
-
-    ctx.screen.onNavigate(({ pathname, searchParams }) => {
-      currentScreen = { pathname, searchParams };
-      refreshAutoDub();
-      if (pathname !== "/entry") {
-        lastRenderKey = "";
-        return;
-      }
+    ctx.screen.onNavigate(async ({ pathname, searchParams }) => {
+      if (pathname !== "/entry") return;
 
       const id = Number(searchParams.id);
-      const key = `${id}:${badgeRevision}`;
-      if (key === lastRenderKey) return;
-      lastRenderKey = key;
-      renderQueue = renderQueue.then(async () => {
-        if (currentScreen.pathname !== "/entry" || Number(currentScreen.searchParams.id) !== id) return;
-        try {
-          await renderAnime(id);
-        } catch (err) {
-          if (lastRenderKey === key) lastRenderKey = "";
-          console.log("[SeaKit] Render error:", err);
-        }
-      });
+      try {
+        await renderAnime(id);
+      } catch (err) {
+        console.log("[SeaKit] Render error:", err);
+      }
     });
 
     ctx.registerEventHandler("seakit-toggle-mal", () => {
       const value = !showMal.get();
       showMal.set(value);
       $storage.set(K_SHOW_MAL, value);
-      badgeRevision++;
       ctx.screen.loadCurrent();
     });
 
@@ -623,25 +490,8 @@ function init() {
       const value = !showDub.get();
       showDub.set(value);
       $storage.set(K_SHOW_DUB, value);
-      badgeRevision++;
       ctx.screen.loadCurrent();
     });
-
-    ctx.registerEventHandler("seakit-toggle-auto-dub", async () => {
-      const value = !autoDub.get();
-      autoDub.set(value);
-      $storage.set(K_AUTO_DUB, value);
-      autoDubGeneration++;
-      autoDubControls = {};
-      if (cancelAutoDubTimer) cancelAutoDubTimer();
-      cancelAutoDubTimer = null;
-      const bridges = await ctx.dom.query(`[${AUTO_DUB_BRIDGE_ATTR}]`);
-      bridges.forEach((bridge) => bridge.remove());
-      if (value) refreshAutoDub();
-    });
-
-    // Request the initial screen once, after the navigation handler is ready.
-    ctx.screen.loadCurrent();
 
     const tray = ctx.newTray({
       withContent: true,
@@ -655,7 +505,7 @@ function init() {
           tray.text("SeaKit", {
             style: { fontSize: "1.05rem", fontWeight: "700" },
           }),
-          tray.text("Anime details and streaming", {
+          tray.text("Anime detail enhancements", {
             style: { fontSize: "0.78rem", opacity: "0.65" },
           }),
           tray.switch("MAL rating", {
@@ -667,14 +517,6 @@ function init() {
             value: showDub.get(),
             onChange: "seakit-toggle-dub",
             side: "left",
-          }),
-          tray.switch("Auto open dub", {
-            value: autoDub.get(),
-            onChange: "seakit-toggle-auto-dub",
-            side: "left",
-          }),
-          tray.text("Prefer dub when online streaming opens. You can still switch to subs.", {
-            style: { fontSize: "0.7rem", opacity: "0.65" },
           }),
           tray.text("Dub data © MyDubList · CC BY 4.0", {
             style: { fontSize: "0.7rem", opacity: "0.5" },
