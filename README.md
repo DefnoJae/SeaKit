@@ -11,6 +11,15 @@ SeaKit is a Seanime plugin that adds optional metadata to anime detail pages wit
 
 ## Auto open dub
 
+### v0.1.13 fix
+
+Removed a screen-state/navigation feedback loop that repeatedly rendered badges
+and fetched dub data, eventually crashing the plugin runtime. Auto dub now checks
+for streaming controls once per second while enabled on an anime page, without
+a DOM mutation observer. Repeated navigation snapshots share a single badge
+render, concurrent dub lookups share one request, and MAL appears without waiting
+for the dub dataset.
+
 Open the SeaKit tray and enable **Auto open dub**. The setting is saved across
 restarts and defaults to off. It is independent of the Dub status badge and
 does not use MyDubList to decide which stream to select.
